@@ -1,52 +1,47 @@
 using System;
 using System.Collections.Generic;
-using System.Data.SqlClient;
+using System.Data.SQLite;
+using System.IO;
 
 namespace Server
 {
     /// <summary>
-    /// Хранение пользователей и истории их команд в SQL Server LocalDB.
-    /// База и таблицы создаются автоматически при первом запуске.
+    /// Хранение пользователей и истории их команд в SQLite (файл ftp.db рядом с Server.exe).
+    /// Файл базы и таблицы создаются автоматически при первом запуске.
     /// </summary>
     public static class Database
     {
-        private const string DbName = "FtpDb";
-        private const string MasterConnection = @"Server=(localdb)\MSSQLLocalDB;Integrated Security=true;Initial Catalog=master;";
-        private const string Connection = @"Server=(localdb)\MSSQLLocalDB;Integrated Security=true;Initial Catalog=" + DbName + ";";
+        private static readonly string DbFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ftp.db");
+        private static readonly string Connection = "Data Source=" + DbFile + ";Version=3;";
 
         public static void Init()
         {
-            Execute(MasterConnection,
-                "IF DB_ID('" + DbName + "') IS NULL CREATE DATABASE [" + DbName + "]");
-
-            Execute(Connection, @"
-IF OBJECT_ID('Users') IS NULL
-    CREATE TABLE Users (
-        Id INT IDENTITY(1,1) PRIMARY KEY,
-        Login NVARCHAR(100) NOT NULL UNIQUE,
-        Password NVARCHAR(100) NOT NULL,
-        Src NVARCHAR(500) NOT NULL
-    );
-IF OBJECT_ID('Commands') IS NULL
-    CREATE TABLE Commands (
-        Id INT IDENTITY(1,1) PRIMARY KEY,
-        UserId INT NOT NULL REFERENCES Users(Id),
-        Command NVARCHAR(1000) NOT NULL,
-        Date DATETIME NOT NULL DEFAULT GETDATE()
-    );
-IF NOT EXISTS (SELECT 1 FROM Users)
-    INSERT INTO Users (Login, Password, Src) VALUES
-        ('user1', 'password1', 'C:\Users\Public\Documents');");
+            Execute(@"
+CREATE TABLE IF NOT EXISTS Users (
+    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+    Login TEXT NOT NULL UNIQUE,
+    Password TEXT NOT NULL,
+    Src TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS Commands (
+    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+    UserId INTEGER NOT NULL REFERENCES Users(Id),
+    Command TEXT NOT NULL,
+    Date TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+INSERT INTO Users (Login, Password, Src)
+SELECT 'user1', 'password1', 'C:\Users\Public\Documents'
+WHERE NOT EXISTS (SELECT 1 FROM Users);");
         }
 
         public static List<User> LoadUsers()
         {
             List<User> users = new List<User>();
-            using (SqlConnection connection = new SqlConnection(Connection))
+            using (SQLiteConnection connection = new SQLiteConnection(Connection))
             {
                 connection.Open();
-                SqlCommand command = new SqlCommand("SELECT Id, Login, Password, Src FROM Users ORDER BY Id", connection);
-                using (SqlDataReader reader = command.ExecuteReader())
+                SQLiteCommand command = new SQLiteCommand("SELECT Id, Login, Password, Src FROM Users ORDER BY Id", connection);
+                using (SQLiteDataReader reader = command.ExecuteReader())
                 {
                     while (reader.Read())
                     {
@@ -63,10 +58,10 @@ IF NOT EXISTS (SELECT 1 FROM Users)
         {
             try
             {
-                using (SqlConnection connection = new SqlConnection(Connection))
+                using (SQLiteConnection connection = new SQLiteConnection(Connection))
                 {
                     connection.Open();
-                    SqlCommand command = new SqlCommand("INSERT INTO Commands (UserId, Command) VALUES (@u, @c)", connection);
+                    SQLiteCommand command = new SQLiteCommand("INSERT INTO Commands (UserId, Command) VALUES (@u, @c)", connection);
                     command.Parameters.AddWithValue("@u", userDbId);
                     command.Parameters.AddWithValue("@c", text);
                     command.ExecuteNonQuery();
@@ -78,12 +73,12 @@ IF NOT EXISTS (SELECT 1 FROM Users)
             }
         }
 
-        private static void Execute(string connectionString, string sql)
+        private static void Execute(string sql)
         {
-            using (SqlConnection connection = new SqlConnection(connectionString))
+            using (SQLiteConnection connection = new SQLiteConnection(Connection))
             {
                 connection.Open();
-                new SqlCommand(sql, connection).ExecuteNonQuery();
+                new SQLiteCommand(sql, connection).ExecuteNonQuery();
             }
         }
     }
