@@ -14,8 +14,8 @@ namespace Client
     internal class Program
     {
         public static IPAddress iPAddress;
-        public static int port;
         public static int Id = -1;
+        public static int port;
         static void Main(string[] args)
         {
             Console.Write("Введите IP-адрес сервера: ");
@@ -92,78 +92,78 @@ namespace Client
                 Socket socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
                 using (socket)
                 {
-                socket.Connect(endPoint);
-                if (socket.Connected)
-                {
-                    Console.ForegroundColor = ConsoleColor.White;
-                    string message = Console.ReadLine();
-                    if (CheckCommand(message))
+                    socket.Connect(endPoint);
+                    if (socket.Connected)
                     {
-                        ViewModelSend viewModelSend = new ViewModelSend(message, Id);
-                        if (message.Split(new string[1] { " " }, StringSplitOptions.None)[0] == "set")
+                        Console.ForegroundColor = ConsoleColor.White;
+                        string message = Console.ReadLine();
+                        if (CheckCommand(message))
                         {
-                            string[] DataMessage = message.Split(new string[1] { " " }, StringSplitOptions.None);
-                            string NameFile = "";
-                            for (int i = 1; i < DataMessage.Length; i++)
+                            ViewModelSend viewModelSend = new ViewModelSend(message, Id);
+                            if (message.Split(new string[1] { " " }, StringSplitOptions.None)[0] == "set")
                             {
-                                if (NameFile == "")
-                                    NameFile = DataMessage[i];
+                                string[] DataMessage = message.Split(new string[1] { " " }, StringSplitOptions.None);
+                                string NameFile = "";
+                                for (int i = 1; i < DataMessage.Length; i++)
+                                {
+                                    if (NameFile == "")
+                                        NameFile = DataMessage[i];
+                                    else
+                                        NameFile += " " + DataMessage[i];
+                                }
+                                if (File.Exists(NameFile))
+                                {
+                                    FileInfo FileInfo = new FileInfo(NameFile);
+                                    FileInfoFTP NewFileInfo = new FileInfoFTP(File.ReadAllBytes(NameFile), FileInfo.Name);
+                                    viewModelSend = new ViewModelSend(JsonConvert.SerializeObject(NewFileInfo), Id);
+                                }
                                 else
-                                    NameFile += " " + DataMessage[i];
+                                {
+                                    Console.ForegroundColor = ConsoleColor.Red;
+                                    Console.WriteLine($"Файл {NameFile} не найден.");
+                                    return;
+                                }
                             }
-                            if (File.Exists(NameFile))
+                            byte[] messageByte = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(viewModelSend));
+                            int BytesSend = socket.Send(messageByte);
+                            byte[] bytes = new byte[10485760];
+                            int BytesRec = socket.Receive(bytes);
+                            string messageServer = Encoding.UTF8.GetString(bytes, 0, BytesRec);
+                            VIewModelMessage vIewModelMessage = JsonConvert.DeserializeObject<VIewModelMessage>(messageServer);
+                            if (vIewModelMessage.Command == "authorization")
                             {
-                                FileInfo FileInfo = new FileInfo(NameFile);
-                                FileInfoFTP NewFileInfo = new FileInfoFTP(File.ReadAllBytes(NameFile), FileInfo.Name);
-                                viewModelSend = new ViewModelSend(JsonConvert.SerializeObject(NewFileInfo), Id);
+                                Id = int.Parse(vIewModelMessage.Data);
                             }
-                            else
+                            else if (vIewModelMessage.Command == "message")
+                                Console.WriteLine(vIewModelMessage.Data);
+                            else if (vIewModelMessage.Command == "cd")
                             {
-                                Console.ForegroundColor = ConsoleColor.Red;
-                                Console.WriteLine($"Файл {NameFile} не найден.");
-                                return;
+                                List<string> FoldersFiles = new List<string>();
+                                FoldersFiles = JsonConvert.DeserializeObject<List<string>>(vIewModelMessage.Data);
+                                foreach (string Name in FoldersFiles)
+                                {
+                                    Console.WriteLine(Name);
+                                }
                             }
-                        }
-                        byte[] messageByte = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(viewModelSend));
-                        int BytesSend = socket.Send(messageByte);
-                        byte[] bytes = new byte[10485760];
-                        int BytesRec = socket.Receive(bytes);
-                        string messageServer = Encoding.UTF8.GetString(bytes, 0, BytesRec);
-                        VIewModelMessage vIewModelMessage = JsonConvert.DeserializeObject<VIewModelMessage>(messageServer);
-                        if (vIewModelMessage.Command == "authorization")
-                        {
-                            Id = int.Parse(vIewModelMessage.Data);
-                        }
-                        else if (vIewModelMessage.Command == "message")
-                            Console.WriteLine(vIewModelMessage.Data);
-                        else if (vIewModelMessage.Command == "cd")
-                        {
-                            List<string> FoldersFiles = new List<string>();
-                            FoldersFiles = JsonConvert.DeserializeObject<List<string>>(vIewModelMessage.Data);
-                            foreach (string Name in FoldersFiles)
+                            else if (vIewModelMessage.Command == "file")
                             {
-                                Console.WriteLine(Name);
+                                string[] DataMessage = viewModelSend.Message.Split(new string[1] { " " }, StringSplitOptions.None);
+                                string getFile = "";
+                                for (int i = 1; i < DataMessage.Length; i++)
+                                    if (getFile == "")
+                                        getFile = DataMessage[i];
+                                    else
+                                        getFile += " " + DataMessage[i];
+                                byte[] byteFile = JsonConvert.DeserializeObject<byte[]>(vIewModelMessage.Data);
+                                File.WriteAllBytes(getFile, byteFile);
                             }
-                        }
-                        else if (vIewModelMessage.Command == "file")
-                        {
-                            string[] DataMessage = viewModelSend.Message.Split(new string[1] { " " }, StringSplitOptions.None);
-                            string getFile = "";
-                            for (int i = 1; i < DataMessage.Length; i++)
-                                if (getFile == "")
-                                    getFile = DataMessage[i];
-                                else
-                                    getFile += " " + DataMessage[i];
-                            byte[] byteFile = JsonConvert.DeserializeObject<byte[]>(vIewModelMessage.Data);
-                            File.WriteAllBytes(getFile, byteFile);
                         }
                     }
-                }
-                else
-                {
-                    Console.ForegroundColor = ConsoleColor.Red;
-                    Console.WriteLine("Ошибка подключения к серверу.");
-                }
+                    else
+                    {
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.WriteLine("Ошибка подключения к серверу.");
+                    }
                 }
             }
             catch (Exception ex)
