@@ -18,7 +18,18 @@ namespace Server
         public static int Port;
         static void Main(string[] args)
         {
-            users.Add(new User("user1", "password1", @"C:\Users\Public\Documents"));
+            try
+            {
+                Database.Init();
+                users = Database.LoadUsers();
+            }
+            catch (Exception ex)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("Ошибка подключения к базе данных: " + ex.Message);
+                Console.ReadKey();
+                return;
+            }
             Console.Write("Введите IP-адрес сервера: ");
             string ipAddressInput = Console.ReadLine();
             Console.Write("Введите порт сервера: ");
@@ -30,6 +41,12 @@ namespace Server
                 StartServer();
             }
             Console.Read();
+        }
+
+        private static string UploadedName(string json)
+        {
+            try { return JsonConvert.DeserializeObject<FileInfoFTP>(json).Name; }
+            catch { return "?"; }
         }
 
         public static bool AutorizationUser(string name, string password)
@@ -47,13 +64,13 @@ namespace Server
                 string[] dirs = Directory.GetDirectories(src);
                 foreach (string dir in dirs)
                 {
-                    string NameDirectory = dir.Replace(src, "");
+                    string NameDirectory = Path.GetFileName(dir);
                     FoldersFiles.Add(NameDirectory + "/");
                 }
                 string[] files = Directory.GetFiles(src);
                 foreach (string file in files)
                 {
-                    string NameFile = file.Replace(src, "");
+                    string NameFile = Path.GetFileName(file);
                     FoldersFiles.Add(NameFile);
                 }
             }
@@ -73,9 +90,10 @@ namespace Server
             Console.WriteLine("Сервер запущен. Ожидание подключений...");
             while (true)
             {
+                Socket Handler = null;
                 try
                 {
-                    Socket Handler = sListener.Accept();
+                    Handler = sListener.Accept();
                     string Data = null;
                     byte[] Bytes = new byte[1048760];
                     int BytesRec = Handler.Receive(Bytes);
@@ -87,6 +105,11 @@ namespace Server
                     {
                         VIewModelMessage ViewModelMessage;
                         string[] DataComand = ViewModelSend.Message.Split(new string[1] { " " }, StringSplitOptions.None);
+                        bool known = ViewModelSend.Id >= 0 && ViewModelSend.Id < users.Count;
+                        if (known && (DataComand[0] == "cd" || DataComand[0] == "get"))
+                            Database.LogCommand(users[ViewModelSend.Id].dbId, ViewModelSend.Message);
+                        else if (known && DataComand[0] != "connect")
+                            Database.LogCommand(users[ViewModelSend.Id].dbId, "set " + UploadedName(ViewModelSend.Message));
                         if (DataComand[0] == "connect")
                         {
                             string[] DataMessage = ViewModelSend.Message.Split(new string[1] { " " }, StringSplitOptions.None);
@@ -94,6 +117,7 @@ namespace Server
                             {
                                 int idUser = users.FindIndex(u => u.name == DataMessage[1] && u.password == DataMessage[2]);
                                 ViewModelMessage = new VIewModelMessage("authorization", idUser.ToString());
+                                Database.LogCommand(users[idUser].dbId, "connect " + DataMessage[1]);
 
 
                             }
@@ -118,19 +142,14 @@ namespace Server
                                 }
                                 else
                                 {
-                                    string cdFolder = "";
-                                    for (int i = 1; i < DataMessage.Length; i++)
+                                    string cdFolder = string.Join(" ", DataMessage.Skip(1)).Trim().Trim('"');
+                                    string current = users[ViewModelSend.Id].temp_src ?? users[ViewModelSend.Id].src;
+                                    string newPath = Path.IsPathRooted(cdFolder) ? cdFolder : Path.Combine(current, cdFolder);
+                                    newPath = Path.GetFullPath(newPath);
+                                    if (Directory.Exists(newPath))
                                     {
-                                        if (cdFolder == "")
-                                        {
-                                            cdFolder += DataMessage[i];
-                                        }
-                                        else
-                                        {
-                                            cdFolder += " " + DataMessage[i];
-                                        }
-                                        users[ViewModelSend.Id].temp_src = users[ViewModelSend.Id].temp_src + cdFolder;
-                                        FoldersFiles = GetDirectory(users[ViewModelSend.Id].temp_src);
+                                        users[ViewModelSend.Id].temp_src = newPath;
+                                        FoldersFiles = GetDirectory(newPath);
                                     }
                                 }
                                 if (FoldersFiles.Count == 0)
@@ -168,7 +187,7 @@ namespace Server
                                         filePath += " " + DataMessage[i];
                                     }
                                 }
-                                byte[] byteFile = File.ReadAllBytes(users[ViewModelSend.Id].temp_src + filePath);
+                                byte[] byteFile = File.ReadAllBytes(Path.Combine(users[ViewModelSend.Id].temp_src ?? users[ViewModelSend.Id].src, filePath));
                                 ViewModelMessage = new VIewModelMessage("file", JsonConvert.SerializeObject(byteFile));
                             }
                             else
@@ -184,7 +203,7 @@ namespace Server
                             if (ViewModelSend.Id != -1)
                             {
                                 FileInfoFTP SendFileInfp = JsonConvert.DeserializeObject<FileInfoFTP>(ViewModelSend.Message);
-                                File.WriteAllBytes(users[ViewModelSend.Id].temp_src + @"\" + SendFileInfp.Name, SendFileInfp.Data);
+                                File.WriteAllBytes(Path.Combine(users[ViewModelSend.Id].temp_src ?? users[ViewModelSend.Id].src, SendFileInfp.Name), SendFileInfp.Data);
                                 ViewModelMessage = new VIewModelMessage("message", "Файл успешно загружен");
                             }
                             else
@@ -197,6 +216,17 @@ namespace Server
                 } catch (Exception ex)
                 {
                     Console.WriteLine("Ошибка: " + ex.Message);
+                    try
+                    {
+                        if (Handler != null)
+                            Handler.Send(Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(new VIewModelMessage("message", "Ошибка сервера: " + ex.Message))));
+                    }
+                    catch { }
+                }
+                finally
+                {
+                    if (Handler != null)
+                        Handler.Close();
                 }
             }
         }

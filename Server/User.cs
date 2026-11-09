@@ -12,6 +12,7 @@ namespace Server
         public string password { get; set; }
         public string src { get; set; }
         public string temp_src { get; set; }
+        public int dbId { get; set; }
         public User(string name, string password, string src)
         {
             this.name = name;
