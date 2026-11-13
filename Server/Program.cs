@@ -56,6 +56,14 @@ namespace Server
             return user != null;
         }
 
+        public static bool IsInsideRoot(string root, string path)
+        {
+            root = Path.GetFullPath(root).TrimEnd('\\');
+            path = Path.GetFullPath(path).TrimEnd('\\');
+            return path.Equals(root, StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase);
+        }
+
         public static List<string> GetDirectory(string src)
         {
             List<string> FoldersFiles = new List<string>();
@@ -94,11 +102,18 @@ namespace Server
                 try
                 {
                     Handler = sListener.Accept();
-                    string Data = null;
-                    byte[] Bytes = new byte[1048760];
-                    int BytesRec = Handler.Receive(Bytes);
-                    Data += Encoding.UTF8.GetString(Bytes, 0, BytesRec);
-                    Console.Write("Сообщение от пользователя: " + Data + "\n");
+                    // Читаем запрос целиком: клиент после отправки закрывает свою сторону (Shutdown),
+                    // поэтому Receive вернёт 0, когда все данные получены. Так не обрезаются большие файлы.
+                    string Data;
+                    using (MemoryStream Received = new MemoryStream())
+                    {
+                        byte[] Bytes = new byte[65536];
+                        int BytesRec;
+                        while ((BytesRec = Handler.Receive(Bytes)) > 0)
+                            Received.Write(Bytes, 0, BytesRec);
+                        Data = Encoding.UTF8.GetString(Received.ToArray());
+                    }
+                    Console.Write("Сообщение от пользователя: " + (Data.Length > 200 ? Data.Substring(0, 200) + "..." : Data) + "\n");
                     string Reply = "";
                     ViewModelSend ViewModelSend = JsonConvert.DeserializeObject<ViewModelSend>(Data);
                     if (ViewModelSend != null)
@@ -131,14 +146,16 @@ namespace Server
                         }
                         else if (DataComand[0] == "cd")
                         {
-                            if (ViewModelSend.Id != -1)
+                            if (known)
                             {
                                 string[] DataMessage = ViewModelSend.Message.Split(new string[1] { " " }, StringSplitOptions.None);
                                 List<string> FoldersFiles = new List<string>();
+                                bool found = false;
                                 if (DataMessage.Length == 1)
                                 {
                                     users[ViewModelSend.Id].temp_src = users[ViewModelSend.Id].src;
                                     FoldersFiles = GetDirectory(users[ViewModelSend.Id].src);
+                                    found = true;
                                 }
                                 else
                                 {
@@ -146,15 +163,17 @@ namespace Server
                                     string current = users[ViewModelSend.Id].temp_src ?? users[ViewModelSend.Id].src;
                                     string newPath = Path.IsPathRooted(cdFolder) ? cdFolder : Path.Combine(current, cdFolder);
                                     newPath = Path.GetFullPath(newPath);
-                                    if (Directory.Exists(newPath))
+                                    // Пользователь не может выйти выше своей корневой папки
+                                    if (IsInsideRoot(users[ViewModelSend.Id].src, newPath) && Directory.Exists(newPath))
                                     {
                                         users[ViewModelSend.Id].temp_src = newPath;
                                         FoldersFiles = GetDirectory(newPath);
+                                        found = true;
                                     }
                                 }
-                                if (FoldersFiles.Count == 0)
+                                if (!found)
                                 {
-                                    ViewModelMessage = new VIewModelMessage("message", "Папка не найдена или пуста");
+                                    ViewModelMessage = new VIewModelMessage("message", "Папка не найдена");
                                 }
                                 else
                                 {
@@ -172,7 +191,7 @@ namespace Server
                         }
                         else if (DataComand[0] == "get")
                         {
-                            if (ViewModelSend.Id != -1)
+                            if (known)
                             {
                                 string[] DataMessage = ViewModelSend.Message.Split(new string[1] { " " }, StringSplitOptions.None);
                                 string filePath = "";
@@ -187,7 +206,8 @@ namespace Server
                                         filePath += " " + DataMessage[i];
                                     }
                                 }
-                                byte[] byteFile = File.ReadAllBytes(Path.Combine(users[ViewModelSend.Id].temp_src ?? users[ViewModelSend.Id].src, filePath));
+                                // GetFileName отрезает пути вида "..\..\file", чтобы нельзя было скачать файл вне своей папки
+                                byte[] byteFile = File.ReadAllBytes(Path.Combine(users[ViewModelSend.Id].temp_src ?? users[ViewModelSend.Id].src, Path.GetFileName(filePath)));
                                 ViewModelMessage = new VIewModelMessage("file", JsonConvert.SerializeObject(byteFile));
                             }
                             else
@@ -200,10 +220,10 @@ namespace Server
                         }
                         else
                         {
-                            if (ViewModelSend.Id != -1)
+                            if (known)
                             {
                                 FileInfoFTP SendFileInfp = JsonConvert.DeserializeObject<FileInfoFTP>(ViewModelSend.Message);
-                                File.WriteAllBytes(Path.Combine(users[ViewModelSend.Id].temp_src ?? users[ViewModelSend.Id].src, SendFileInfp.Name), SendFileInfp.Data);
+                                File.WriteAllBytes(Path.Combine(users[ViewModelSend.Id].temp_src ?? users[ViewModelSend.Id].src, Path.GetFileName(SendFileInfp.Name)), SendFileInfp.Data);
                                 ViewModelMessage = new VIewModelMessage("message", "Файл успешно загружен");
                             }
                             else
