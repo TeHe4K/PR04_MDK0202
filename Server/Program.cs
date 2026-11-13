@@ -64,6 +64,14 @@ namespace Server
                 || path.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase);
         }
 
+        // Скрытые и системные элементы (например "Мои рисунки" — служебные ссылки Windows,
+        // которые нельзя открыть, и desktop.ini) не показываем, как и Проводник
+        public static bool IsHiddenOrSystem(string path)
+        {
+            FileAttributes attributes = File.GetAttributes(path);
+            return (attributes & (FileAttributes.Hidden | FileAttributes.System)) != 0;
+        }
+
         public static List<string> GetDirectory(string src)
         {
             List<string> FoldersFiles = new List<string>();
@@ -72,12 +80,16 @@ namespace Server
                 string[] dirs = Directory.GetDirectories(src);
                 foreach (string dir in dirs)
                 {
+                    if (IsHiddenOrSystem(dir))
+                        continue;
                     string NameDirectory = Path.GetFileName(dir);
                     FoldersFiles.Add(NameDirectory + "/");
                 }
                 string[] files = Directory.GetFiles(src);
                 foreach (string file in files)
                 {
+                    if (IsHiddenOrSystem(file))
+                        continue;
                     string NameFile = Path.GetFileName(file);
                     FoldersFiles.Add(NameFile);
                 }
@@ -166,8 +178,10 @@ namespace Server
                                     // Пользователь не может выйти выше своей корневой папки
                                     if (IsInsideRoot(users[ViewModelSend.Id].src, newPath) && Directory.Exists(newPath))
                                     {
-                                        users[ViewModelSend.Id].temp_src = newPath;
+                                        // Сначала читаем содержимое, и только если получилось — меняем текущую папку.
+                                        // Иначе при ошибке доступа сервер "застрял" бы в папке, которую нельзя открыть.
                                         FoldersFiles = GetDirectory(newPath);
+                                        users[ViewModelSend.Id].temp_src = newPath;
                                         found = true;
                                     }
                                 }
